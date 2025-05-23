@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 
 	"github.com/gorilla/mux"
 )
@@ -19,9 +21,15 @@ func (s *APIServer) Run() {
 
 	router.HandleFunc("/product", makeHTTPHandleFunc(s.handleProduct))
 	router.HandleFunc("/product/{id}", makeHTTPHandleFunc(s.handleGetProduct))
+	router.HandleFunc("/products", makeHTTPHandleFunc(s.handleFilteredProducts))
+	router.HandleFunc("/image-proxy", makeHTTPHandleFunc(s.handleImageProxy))
+	router.HandleFunc("/manufacturers", makeHTTPHandleFunc(s.handleGetManufacturers))
+	router.HandleFunc("/stores", makeHTTPHandleFunc(s.handleGetStores))
+
+	corsRouter := corsMiddleware(router)
 
 	log.Println("JSON API server running on port: ", s.listenAddr)
-	http.ListenAndServe(s.listenAddr, router)
+	http.ListenAndServe(s.listenAddr, corsRouter)
 }
 
 func NewAPIServer(listenAddr string, store Storage) *APIServer {
@@ -46,6 +54,24 @@ func (s *APIServer) handleGetProduct(w http.ResponseWriter, r *http.Request) err
 	return WriteJSON(w, http.StatusOK, products)
 }
 
+func (s *APIServer) handleFilteredProducts(w http.ResponseWriter, r *http.Request) error {
+	category := r.URL.Query().Get("category")
+	manufacturer := r.URL.Query().Get("manufacturer")
+	store := r.URL.Query().Get("store")
+	minPrice := r.URL.Query().Get("minPrice")
+	maxPrice := r.URL.Query().Get("maxPrice")
+	title := r.URL.Query().Get("title")
+	page := r.URL.Query().Get("page")
+	pageSize := r.URL.Query().Get("pageSize")
+
+	products, err := s.store.GetFilteredProducts(category, manufacturer, store, minPrice, maxPrice, title, page, pageSize)
+	if err != nil {
+		return err
+	}
+
+	return WriteJSON(w, http.StatusOK, products)
+}
+
 func WriteJSON(w http.ResponseWriter, status int, v any) error {
 	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -64,4 +90,78 @@ func makeHTTPHandleFunc(f apiFunc) http.HandlerFunc {
 			WriteJSON(w, http.StatusBadRequest, APIError{Error: err.Error()})
 		}
 	}
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *APIServer) handleImageProxy(w http.ResponseWriter, r *http.Request) error {
+	imageURL := r.URL.Query().Get("url")
+	if imageURL == "" {
+		http.Error(w, "Missing 'url' parameter", http.StatusBadRequest)
+		return nil
+	}
+
+	parsedURL, err := url.Parse(imageURL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		http.Error(w, "Invalid image URL", http.StatusBadRequest)
+		return nil
+	}
+
+	resp, err := http.Get(imageURL)
+	if err != nil {
+		http.Error(w, "Failed to fetch image", http.StatusInternalServerError)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "Image not accessible", http.StatusBadGateway)
+		return nil
+	}
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(http.StatusOK)
+	_, copyErr := io.Copy(w, resp.Body)
+	return copyErr
+}
+
+func (s *APIServer) handleGetManufacturers(w http.ResponseWriter, r *http.Request) error {
+	category := r.URL.Query().Get("category")
+
+	var manufacturers []string
+	var err error
+
+	if category != "" {
+		manufacturers, err = s.store.GetManufacturersByCategory(category)
+	} else {
+		manufacturers, err = s.store.GetUniqueManufacturers()
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to fetch manufacturers: %w", err)
+	}
+
+	return WriteJSON(w, http.StatusOK, manufacturers)
+}
+
+func (s *APIServer) handleGetStores(w http.ResponseWriter, r *http.Request) error {
+	stores, err := s.store.GetUniqueStores()
+	if err != nil {
+		return fmt.Errorf("failed to fetch stores: %w", err)
+	}
+	return WriteJSON(w, http.StatusOK, stores)
 }
