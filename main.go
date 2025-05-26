@@ -14,6 +14,10 @@ func main() {
 		log.Fatal("Could not create products table:", err)
 	}
 
+	if err := store.createUserTable(); err != nil {
+		log.Fatal("Could not create users table:", err)
+	}
+
 	err = ImportProductsFromCSV(store, "products.csv")
 	if err != nil {
 		log.Fatalf("CSV import failed: %v", err)

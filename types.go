@@ -13,3 +13,9 @@ type Product struct {
 	Image        string `json:"image"`
 	Store        string `json:"store"`
 }
+
+type User struct {
+	ID       int    `json:"id"`
+	Email    string `json:"email"`
+	Password string `json:"-"`
+}

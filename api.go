@@ -9,6 +9,7 @@ import (
 	"net/url"
 
 	"github.com/gorilla/mux"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type APIServer struct {
@@ -25,6 +26,8 @@ func (s *APIServer) Run() {
 	router.HandleFunc("/manufacturers", makeHTTPHandleFunc(s.handleGetManufacturers))
 	router.HandleFunc("/stores", makeHTTPHandleFunc(s.handleGetStores))
 	router.HandleFunc("/product/{id}", makeHTTPHandleFunc(s.handleGetProductById))
+	router.HandleFunc("/register", makeHTTPHandleFunc(s.handleRegister)).Methods("POST")
+	router.HandleFunc("/login", makeHTTPHandleFunc(s.handleLogin)).Methods("POST")
 
 	corsRouter := corsMiddleware(router)
 
@@ -37,6 +40,53 @@ func NewAPIServer(listenAddr string, store Storage) *APIServer {
 		listenAddr: listenAddr,
 		store:      store,
 	}
+}
+
+func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return err
+	}
+
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+
+	user := &User{
+		Email:    req.Email,
+		Password: string(hashedPassword),
+	}
+	if err := s.store.CreateUser(user); err != nil {
+		return fmt.Errorf("error creating user: %w", err)
+	}
+	return WriteJSON(w, http.StatusCreated, map[string]string{"message": "user created"})
+}
+
+func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return err
+	}
+
+	user, err := s.store.GetUserByEmail(req.Email)
+	if err != nil {
+		return fmt.Errorf("invalid credentials")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		return fmt.Errorf("invalid credentials")
+	}
+
+	token, err := GenerateJWT(user.ID)
+	if err != nil {
+		return fmt.Errorf("failed to generate token: %w", err)
+	}
+
+	return WriteJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 func (s *APIServer) handleProduct(w http.ResponseWriter, r *http.Request) error {

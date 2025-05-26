@@ -16,10 +16,29 @@ type Storage interface {
 	GetManufacturersByCategory(category string) ([]string, error)
 	GetUniqueStores() ([]string, error)
 	GetProductByID(id int) (*Product, error)
+	CreateUser(*User) error
+	GetUserByEmail(email string) (*User, error)
 }
 
 type PostgressStore struct {
 	db *sql.DB
+}
+
+func (s *PostgressStore) CreateUser(user *User) error {
+	_, err := s.db.Exec(`
+		INSERT INTO users (email, password) VALUES ($1, $2)
+	`, user.Email, user.Password)
+	return err
+}
+
+func (s *PostgressStore) GetUserByEmail(email string) (*User, error) {
+	row := s.db.QueryRow("SELECT id, email, password FROM users WHERE email = $1", email)
+	user := new(User)
+	err := row.Scan(&user.ID, &user.Email, &user.Password)
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
 }
 
 func NewPostgressStore() (*PostgressStore, error) {
@@ -38,7 +57,13 @@ func NewPostgressStore() (*PostgressStore, error) {
 }
 
 func (s *PostgressStore) Init() error {
-	return s.createProductsTable()
+	if err := s.createProductsTable(); err != nil {
+		return err
+	}
+	if err := s.createUserTable(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *PostgressStore) createProductsTable() error {
@@ -57,6 +82,17 @@ func (s *PostgressStore) createProductsTable() error {
 	)`
 
 	_, err := s.db.Exec(query)
+	return err
+}
+
+func (s *PostgressStore) createUserTable() error {
+	_, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS users (
+			id SERIAL PRIMARY KEY,
+			email TEXT UNIQUE NOT NULL,
+			password TEXT NOT NULL
+		)
+	`)
 	return err
 }
 
