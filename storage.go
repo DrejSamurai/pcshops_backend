@@ -15,6 +15,7 @@ type Storage interface {
 	GetUniqueManufacturers() ([]string, error)
 	GetManufacturersByCategory(category string) ([]string, error)
 	GetUniqueStores() ([]string, error)
+	GetProductByID(id int) (*Product, error)
 }
 
 type PostgressStore struct {
@@ -149,7 +150,6 @@ func (s *PostgressStore) GetFilteredProducts(category, manufacturer, store, minP
 		argIndex++
 	}
 
-	// Count query (no limit/offset)
 	countQuery := "SELECT COUNT(*)" + baseQuery + filterQuery
 	var totalCount int
 	err := s.db.QueryRow(countQuery, args...).Scan(&totalCount)
@@ -157,7 +157,6 @@ func (s *PostgressStore) GetFilteredProducts(category, manufacturer, store, minP
 		return nil, 0, err
 	}
 
-	// Pagination params
 	page := 1
 	pageSize := 20
 	if pageStr != "" {
@@ -168,12 +167,10 @@ func (s *PostgressStore) GetFilteredProducts(category, manufacturer, store, minP
 	}
 	offset := (page - 1) * pageSize
 
-	// Add LIMIT and OFFSET placeholders to args
 	filteredArgs := make([]interface{}, len(args))
 	copy(filteredArgs, args)
 	filteredArgs = append(filteredArgs, pageSize, offset)
 
-	// Data query with limit/offset
 	dataQuery := "SELECT *" + baseQuery + filterQuery + fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
 
 	rows, err := s.db.Query(dataQuery, filteredArgs...)
@@ -251,4 +248,29 @@ func (s *PostgressStore) GetUniqueStores() ([]string, error) {
 		stores = append(stores, m)
 	}
 	return stores, nil
+}
+
+func (s *PostgressStore) GetProductByID(id int) (*Product, error) {
+	row := s.db.QueryRow("SELECT * FROM products WHERE id = $1", id)
+	product := new(Product)
+	err := row.Scan(
+		&product.ID,
+		&product.Title,
+		&product.Manufacturer,
+		&product.Price,
+		&product.Code,
+		&product.Warranty,
+		&product.Link,
+		&product.Category,
+		&product.Description,
+		&product.Image,
+		&product.Store,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return product, nil
 }

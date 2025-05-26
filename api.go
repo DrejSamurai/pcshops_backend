@@ -20,11 +20,11 @@ func (s *APIServer) Run() {
 	router := mux.NewRouter()
 
 	router.HandleFunc("/product", makeHTTPHandleFunc(s.handleProduct))
-	router.HandleFunc("/product/{id}", makeHTTPHandleFunc(s.handleGetProduct))
 	router.HandleFunc("/products", makeHTTPHandleFunc(s.handleFilteredProducts))
 	router.HandleFunc("/image-proxy", makeHTTPHandleFunc(s.handleImageProxy))
 	router.HandleFunc("/manufacturers", makeHTTPHandleFunc(s.handleGetManufacturers))
 	router.HandleFunc("/stores", makeHTTPHandleFunc(s.handleGetStores))
+	router.HandleFunc("/product/{id}", makeHTTPHandleFunc(s.handleGetProductById))
 
 	corsRouter := corsMiddleware(router)
 
@@ -44,6 +44,27 @@ func (s *APIServer) handleProduct(w http.ResponseWriter, r *http.Request) error 
 		return s.handleGetProduct(w, r)
 	}
 	return fmt.Errorf("method not allowed %s", r.Method)
+}
+
+func (s *APIServer) handleGetProductById(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != "GET" {
+		return fmt.Errorf("method not allowed %s", r.Method)
+	}
+
+	vars := mux.Vars(r)
+	idStr := vars["id"]
+	var id int
+	_, err := fmt.Sscanf(idStr, "%d", &id)
+	if err != nil {
+		return fmt.Errorf("invalid product ID")
+	}
+
+	product, err := s.store.GetProductByID(id)
+	if err != nil {
+		return fmt.Errorf("could not fetch product: %w", err)
+	}
+
+	return WriteJSON(w, http.StatusOK, product)
 }
 
 func (s *APIServer) handleGetProduct(w http.ResponseWriter, r *http.Request) error {
