@@ -64,12 +64,20 @@ func (s *APIServer) handleFilteredProducts(w http.ResponseWriter, r *http.Reques
 	page := r.URL.Query().Get("page")
 	pageSize := r.URL.Query().Get("pageSize")
 
-	products, err := s.store.GetFilteredProducts(category, manufacturer, store, minPrice, maxPrice, title, page, pageSize)
+	products, totalCount, err := s.store.GetFilteredProducts(category, manufacturer, store, minPrice, maxPrice, title, page, pageSize)
 	if err != nil {
 		return err
 	}
 
-	return WriteJSON(w, http.StatusOK, products)
+	response := struct {
+		Data       []*Product `json:"data"`
+		TotalCount int        `json:"totalCount"`
+	}{
+		Data:       products,
+		TotalCount: totalCount,
+	}
+
+	return WriteJSON(w, http.StatusOK, response)
 }
 
 func WriteJSON(w http.ResponseWriter, status int, v any) error {

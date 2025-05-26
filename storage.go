@@ -11,7 +11,7 @@ import (
 type Storage interface {
 	CreateProduct(*Product) error
 	GetProducts() ([]*Product, error)
-	GetFilteredProducts(category, manufacturer, store, minPrice, maxPrice, title, pageStr, pageSizeStr string) ([]*Product, error)
+	GetFilteredProducts(category, manufacturer, store, minPrice, maxPrice, title, pageStr, pageSizeStr string) ([]*Product, int, error)
 	GetUniqueManufacturers() ([]string, error)
 	GetManufacturersByCategory(category string) ([]string, error)
 	GetUniqueStores() ([]string, error)
@@ -106,13 +106,15 @@ func scanIntoProduct(rows *sql.Rows) (*Product, error) {
 	return product, err
 }
 
-func (s *PostgressStore) GetFilteredProducts(category, manufacturer, store, minPrice, maxPrice, title, pageStr, pageSizeStr string) ([]*Product, error) {
-	query := "SELECT * FROM products WHERE 1=1"
+func (s *PostgressStore) GetFilteredProducts(category, manufacturer, store, minPrice, maxPrice, title, pageStr, pageSizeStr string) ([]*Product, int, error) {
+	baseQuery := " FROM products WHERE 1=1"
 	args := []interface{}{}
 	argIndex := 1
 
+	filterQuery := ""
+
 	if category != "" {
-		query += fmt.Sprintf(" AND category = $%d", argIndex)
+		filterQuery += fmt.Sprintf(" AND category = $%d", argIndex)
 		args = append(args, category)
 		argIndex++
 	}
@@ -124,29 +126,38 @@ func (s *PostgressStore) GetFilteredProducts(category, manufacturer, store, minP
 			args = append(args, strings.TrimSpace(m))
 			argIndex++
 		}
-		query += fmt.Sprintf(" AND manufacturer IN (%s)", strings.Join(placeholders, ","))
+		filterQuery += fmt.Sprintf(" AND manufacturer IN (%s)", strings.Join(placeholders, ","))
 	}
 	if store != "" {
-		query += fmt.Sprintf(" AND store = $%d", argIndex)
+		filterQuery += fmt.Sprintf(" AND store = $%d", argIndex)
 		args = append(args, store)
 		argIndex++
 	}
 	if minPrice != "" {
-		query += fmt.Sprintf(" AND price >= $%d", argIndex)
+		filterQuery += fmt.Sprintf(" AND price >= $%d", argIndex)
 		args = append(args, minPrice)
 		argIndex++
 	}
 	if maxPrice != "" {
-		query += fmt.Sprintf(" AND price <= $%d", argIndex)
+		filterQuery += fmt.Sprintf(" AND price <= $%d", argIndex)
 		args = append(args, maxPrice)
 		argIndex++
 	}
 	if title != "" {
-		query += fmt.Sprintf(" AND title ILIKE $%d", argIndex)
+		filterQuery += fmt.Sprintf(" AND title ILIKE $%d", argIndex)
 		args = append(args, "%"+title+"%")
 		argIndex++
 	}
 
+	// Count query (no limit/offset)
+	countQuery := "SELECT COUNT(*)" + baseQuery + filterQuery
+	var totalCount int
+	err := s.db.QueryRow(countQuery, args...).Scan(&totalCount)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Pagination params
 	page := 1
 	pageSize := 20
 	if pageStr != "" {
@@ -157,12 +168,17 @@ func (s *PostgressStore) GetFilteredProducts(category, manufacturer, store, minP
 	}
 	offset := (page - 1) * pageSize
 
-	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
-	args = append(args, pageSize, offset)
+	// Add LIMIT and OFFSET placeholders to args
+	filteredArgs := make([]interface{}, len(args))
+	copy(filteredArgs, args)
+	filteredArgs = append(filteredArgs, pageSize, offset)
 
-	rows, err := s.db.Query(query, args...)
+	// Data query with limit/offset
+	dataQuery := "SELECT *" + baseQuery + filterQuery + fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
+
+	rows, err := s.db.Query(dataQuery, filteredArgs...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -170,12 +186,12 @@ func (s *PostgressStore) GetFilteredProducts(category, manufacturer, store, minP
 	for rows.Next() {
 		product, err := scanIntoProduct(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		products = append(products, product)
 	}
 
-	return products, nil
+	return products, totalCount, nil
 }
 
 func (s *PostgressStore) GetUniqueManufacturers() ([]string, error) {
