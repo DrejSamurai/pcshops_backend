@@ -19,3 +19,10 @@ type User struct {
 	Email    string `json:"email"`
 	Password string `json:"-"`
 }
+
+type ComputerConfiguration struct {
+	ID       int        `json:"id"`
+	UserID   int        `json:"userID"`
+	Name     string     `json:"name"`
+	Products []*Product `json:"products"`
+}

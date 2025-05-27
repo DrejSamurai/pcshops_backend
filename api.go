@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 
 	"github.com/gorilla/mux"
 	"golang.org/x/crypto/bcrypt"
@@ -28,6 +29,11 @@ func (s *APIServer) Run() {
 	router.HandleFunc("/product/{id}", makeHTTPHandleFunc(s.handleGetProductById))
 	router.HandleFunc("/register", makeHTTPHandleFunc(s.handleRegister)).Methods("POST")
 	router.HandleFunc("/login", makeHTTPHandleFunc(s.handleLogin)).Methods("POST")
+	router.HandleFunc("/api/youtube", handleYouTubeSearch)
+	router.HandleFunc("/configurations", makeHTTPHandleFunc(s.handleCreateConfiguration)).Methods("POST")
+	router.HandleFunc("/configurations/{id}/products", makeHTTPHandleFunc(s.handleAddProductToConfiguration)).Methods("POST")
+	router.HandleFunc("/configurations/{id}/products/{productID}", makeHTTPHandleFunc(s.handleRemoveProductFromConfiguration)).Methods("DELETE")
+	router.HandleFunc("/users/{userID}/configurations", makeHTTPHandleFunc(s.handleGetConfigurationsByUser)).Methods("GET")
 
 	corsRouter := corsMiddleware(router)
 
@@ -243,4 +249,126 @@ func (s *APIServer) handleGetStores(w http.ResponseWriter, r *http.Request) erro
 		return fmt.Errorf("failed to fetch stores: %w", err)
 	}
 	return WriteJSON(w, http.StatusOK, stores)
+}
+
+func handleYouTubeSearch(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		http.Error(w, "Missing query", http.StatusBadRequest)
+		return
+	}
+
+	apiKey := os.Getenv("YOUTUBE_API_KEY")
+	if apiKey == "" {
+		log.Println("YOUTUBE_API_KEY is not set")
+		http.Error(w, "API key not configured", http.StatusInternalServerError)
+		return
+	}
+
+	youtubeURL := fmt.Sprintf(
+		"https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=5&q=%s&key=%s",
+		url.QueryEscape(query), apiKey,
+	)
+
+	resp, err := http.Get(youtubeURL)
+	if err != nil {
+		log.Println("Error fetching from YouTube API:", err)
+		http.Error(w, "Failed to fetch from YouTube API", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Println("Error reading YouTube response body:", err)
+		http.Error(w, "Error reading response", http.StatusInternalServerError)
+		return
+	}
+
+	if resp.StatusCode != 200 {
+		log.Printf("YouTube API returned status %d: %s\n", resp.StatusCode, string(body))
+		http.Error(w, "YouTube API error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+func (s *APIServer) handleCreateConfiguration(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		UserID int    `json:"userID"`
+		Name   string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return err
+	}
+
+	configID, err := s.store.CreateConfiguration(req.UserID, req.Name)
+	if err != nil {
+		return fmt.Errorf("failed to create configuration: %w", err)
+	}
+
+	return WriteJSON(w, http.StatusCreated, map[string]int{"configID": configID})
+}
+
+func (s *APIServer) handleAddProductToConfiguration(w http.ResponseWriter, r *http.Request) error {
+	vars := mux.Vars(r)
+	configIDStr := vars["id"]
+	var configID int
+	_, err := fmt.Sscanf(configIDStr, "%d", &configID)
+	if err != nil {
+		return fmt.Errorf("invalid configuration ID")
+	}
+
+	var req struct {
+		ProductID int `json:"productID"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return err
+	}
+
+	if err := s.store.AddProductToConfiguration(configID, req.ProductID); err != nil {
+		return fmt.Errorf("failed to add product to configuration: %w", err)
+	}
+
+	return WriteJSON(w, http.StatusOK, map[string]string{"message": "product added"})
+}
+
+func (s *APIServer) handleRemoveProductFromConfiguration(w http.ResponseWriter, r *http.Request) error {
+	vars := mux.Vars(r)
+	configIDStr := vars["id"]
+	productIDStr := vars["productID"]
+	var configID, productID int
+	_, err := fmt.Sscanf(configIDStr, "%d", &configID)
+	if err != nil {
+		return fmt.Errorf("invalid configuration ID")
+	}
+	_, err = fmt.Sscanf(productIDStr, "%d", &productID)
+	if err != nil {
+		return fmt.Errorf("invalid product ID")
+	}
+
+	if err := s.store.RemoveProductFromConfiguration(configID, productID); err != nil {
+		return fmt.Errorf("failed to remove product from configuration: %w", err)
+	}
+
+	return WriteJSON(w, http.StatusOK, map[string]string{"message": "product removed"})
+}
+
+func (s *APIServer) handleGetConfigurationsByUser(w http.ResponseWriter, r *http.Request) error {
+	vars := mux.Vars(r)
+	userIDStr := vars["userID"]
+
+	var userID int
+	if _, err := fmt.Sscanf(userIDStr, "%d", &userID); err != nil {
+		return fmt.Errorf("invalid user ID")
+	}
+
+	configs, err := s.store.GetConfigurationsByUserID(userID)
+	if err != nil {
+		return fmt.Errorf("could not get configurations: %w", err)
+	}
+
+	return WriteJSON(w, http.StatusOK, configs)
 }

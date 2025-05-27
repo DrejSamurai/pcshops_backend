@@ -18,6 +18,11 @@ type Storage interface {
 	GetProductByID(id int) (*Product, error)
 	CreateUser(*User) error
 	GetUserByEmail(email string) (*User, error)
+	CreateConfiguration(userID int, name string) (int, error)
+	AddProductToConfiguration(configID, productID int) error
+	RemoveProductFromConfiguration(configID, productID int) error
+	GetProductsByConfigurationID(configID int) ([]*Product, error)
+	GetConfigurationsByUserID(userID int) ([]*ComputerConfiguration, error)
 }
 
 type PostgressStore struct {
@@ -96,12 +101,69 @@ func (s *PostgressStore) createUserTable() error {
 	return err
 }
 
+func (s *PostgressStore) CreateComputerConfigurationsTable() error {
+	query := `
+    CREATE TABLE IF NOT EXISTS computer_configurations (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        name TEXT NOT NULL,
+        total_price BIGINT NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    `
+	_, err := s.db.Exec(query)
+	return err
+}
+
+func (s *PostgressStore) CreateConfigurationItemsTable() error {
+	query := `
+    CREATE TABLE IF NOT EXISTS configuration_items (
+        id SERIAL PRIMARY KEY,
+        configuration_id INTEGER NOT NULL REFERENCES computer_configurations(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id),
+        UNIQUE(configuration_id, product_id)
+    );
+    `
+	_, err := s.db.Exec(query)
+	return err
+}
+
 func (s *PostgressStore) CreateProduct(p *Product) error {
 	_, err := s.db.Exec(`
 		INSERT INTO products (title, manufacturer, price, code, warranty, link, category, description, image, store)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, p.Title, p.Manufacturer, p.Price, p.Code, p.Warranty, p.Link, p.Category, p.Description, p.Image, p.Store)
 
+	return err
+}
+
+func (s *PostgressStore) CreateConfiguration(userID int, name string) (int, error) {
+	var configID int
+	err := s.db.QueryRow(`
+        INSERT INTO computer_configurations (user_id, name)
+        VALUES ($1, $2)
+        RETURNING id
+    `, userID, name).Scan(&configID)
+	if err != nil {
+		return 0, err
+	}
+	return configID, nil
+}
+
+func (s *PostgressStore) AddProductToConfiguration(configID, productID int) error {
+	_, err := s.db.Exec(`
+        INSERT INTO configuration_items (configuration_id, product_id)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+    `, configID, productID)
+	return err
+}
+
+func (s *PostgressStore) RemoveProductFromConfiguration(configID, productID int) error {
+	_, err := s.db.Exec(`
+        DELETE FROM configuration_items
+        WHERE configuration_id = $1 AND product_id = $2
+    `, configID, productID)
 	return err
 }
 
@@ -309,4 +371,56 @@ func (s *PostgressStore) GetProductByID(id int) (*Product, error) {
 		return nil, err
 	}
 	return product, nil
+}
+
+func (s *PostgressStore) GetProductsByConfigurationID(configID int) ([]*Product, error) {
+	rows, err := s.db.Query(`
+		SELECT p.id, p.title, p.description, p.price
+		FROM products p
+		JOIN configuration_items ci ON ci.product_id = p.id
+		WHERE ci.configuration_id = $1
+	`, configID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []*Product
+	for rows.Next() {
+		var p Product
+		if err := rows.Scan(&p.ID, &p.Title, &p.Description, &p.Price); err != nil {
+			return nil, err
+		}
+		products = append(products, &p)
+	}
+	return products, nil
+}
+
+func (s *PostgressStore) GetConfigurationsByUserID(userID int) ([]*ComputerConfiguration, error) {
+	rows, err := s.db.Query(`
+		SELECT id, user_id, name
+		FROM computer_configurations
+		WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var configs []*ComputerConfiguration
+	for rows.Next() {
+		var c ComputerConfiguration
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Name); err != nil {
+			return nil, err
+		}
+
+		products, err := s.GetProductsByConfigurationID(c.ID)
+		if err != nil {
+			return nil, err
+		}
+		c.Products = products
+
+		configs = append(configs, &c)
+	}
+	return configs, nil
 }
