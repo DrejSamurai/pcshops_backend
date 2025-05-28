@@ -375,7 +375,8 @@ func (s *PostgressStore) GetProductByID(id int) (*Product, error) {
 
 func (s *PostgressStore) GetProductsByConfigurationID(configID int) ([]*Product, error) {
 	rows, err := s.db.Query(`
-		SELECT p.id, p.title, p.description, p.price
+		SELECT p.id, p.title, p.description, p.price,
+		       p.category, p.code, p.image, p.link, p.manufacturer, p.store, p.warranty
 		FROM products p
 		JOIN configuration_items ci ON ci.product_id = p.id
 		WHERE ci.configuration_id = $1
@@ -388,7 +389,10 @@ func (s *PostgressStore) GetProductsByConfigurationID(configID int) ([]*Product,
 	var products []*Product
 	for rows.Next() {
 		var p Product
-		if err := rows.Scan(&p.ID, &p.Title, &p.Description, &p.Price); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.Title, &p.Description, &p.Price,
+			&p.Category, &p.Code, &p.Image, &p.Link, &p.Manufacturer, &p.Store, &p.Warranty,
+		); err != nil {
 			return nil, err
 		}
 		products = append(products, &p)
