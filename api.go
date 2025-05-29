@@ -34,6 +34,7 @@ func (s *APIServer) Run() {
 	router.HandleFunc("/configurations/{id}/products", makeHTTPHandleFunc(s.handleAddProductToConfiguration)).Methods("POST")
 	router.HandleFunc("/configurations/{id}/products/{productID}", makeHTTPHandleFunc(s.handleRemoveProductFromConfiguration)).Methods("DELETE")
 	router.HandleFunc("/users/{userID}/configurations", makeHTTPHandleFunc(s.handleGetConfigurationsByUser)).Methods("GET")
+	router.HandleFunc("/products/random", makeHTTPHandleFunc(s.handleGetRandomProducts)).Methods("GET")
 
 	corsRouter := corsMiddleware(router)
 
@@ -371,4 +372,12 @@ func (s *APIServer) handleGetConfigurationsByUser(w http.ResponseWriter, r *http
 	}
 
 	return WriteJSON(w, http.StatusOK, configs)
+}
+
+func (s *APIServer) handleGetRandomProducts(w http.ResponseWriter, r *http.Request) error {
+	products, err := s.store.GetRandomProducts(12)
+	if err != nil {
+		return fmt.Errorf("failed to fetch random products: %w", err)
+	}
+	return WriteJSON(w, http.StatusOK, products)
 }

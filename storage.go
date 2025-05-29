@@ -23,6 +23,7 @@ type Storage interface {
 	RemoveProductFromConfiguration(configID, productID int) error
 	GetProductsByConfigurationID(configID int) ([]*Product, error)
 	GetConfigurationsByUserID(userID int) ([]*ComputerConfiguration, error)
+	GetRandomProducts(limit int) ([]*Product, error)
 }
 
 type PostgressStore struct {
@@ -427,4 +428,27 @@ func (s *PostgressStore) GetConfigurationsByUserID(userID int) ([]*ComputerConfi
 		configs = append(configs, &c)
 	}
 	return configs, nil
+}
+
+func (s *PostgressStore) GetRandomProducts(limit int) ([]*Product, error) {
+	query := `
+        SELECT * FROM products
+        ORDER BY RANDOM()
+        LIMIT $1
+    `
+	rows, err := s.db.Query(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []*Product
+	for rows.Next() {
+		product, err := scanIntoProduct(rows)
+		if err != nil {
+			return nil, err
+		}
+		products = append(products, product)
+	}
+	return products, nil
 }
