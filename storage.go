@@ -48,7 +48,7 @@ func (s *PostgressStore) GetUserByEmail(email string) (*User, error) {
 }
 
 func NewPostgressStore() (*PostgressStore, error) {
-	connStr := "host=db user=postgres dbname=postgres password=pcshops sslmode=disable"
+	connStr := "host=db user=postgres dbname=pcshops password=pcshops sslmode=disable"
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
